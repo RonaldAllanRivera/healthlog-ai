@@ -1,0 +1,36 @@
+# Node
+node_modules/
+.npm/
+.pnpm-debug.log*
+npm-debug.log*
+
+# Build outputs
+.next/
+out/
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# Expo
+.expo/
+.expo-shared/
+web-build/
+
+# Supabase
+supabase/.branches/
+supabase/.temp/
+
+# Claude Code
+.claude/settings.local.json
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
+*.swp
