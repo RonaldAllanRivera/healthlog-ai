@@ -3,16 +3,30 @@
 -- implementations from https://github.com/usebasejump/supabase-test-helpers)
 -- so that RLS tests can create synthetic users and switch auth context.
 --
--- These helpers are only used in the test suite (supabase test db) and are
--- safe to ship in all environments because they live in the `tests` schema
--- and carry no production data.
+-- SECURITY: these functions can fabricate users and impersonate identities.
+-- If callable by anon or authenticated in production, a logged-in user
+-- could escalate themselves to any other user. We mitigate two ways:
+--   1. Every dangerous function requires the session variable
+--      `app.testing = 'true'` to be set, otherwise it raises.
+--   2. Tests set `app.testing = true` at the start of each file.
+-- Production code will never set this variable, so calls fail safely.
 
--- Create the tests schema and grant access to Supabase roles.
 create schema if not exists tests;
 grant usage on schema tests to anon, authenticated, service_role;
 
--- Revoke all function-level access from public within tests schema.
-alter default privileges in schema tests revoke execute on functions from public;
+-- Internal guard called by every dangerous helper. Raises if not in test mode.
+create or replace function tests.assert_test_mode()
+returns void
+language plpgsql
+as $$
+begin
+  if current_setting('app.testing', true) is distinct from 'true' then
+    raise exception
+      'tests.* helpers may only be called when app.testing = ''true''. '
+      'This protects production from impersonation attacks.';
+  end if;
+end;
+$$;
 
 -- ============================================================================
 -- tests.create_supabase_user
@@ -33,6 +47,7 @@ as $$
 declare
   user_id uuid;
 begin
+  perform tests.assert_test_mode();
   user_id := gen_random_uuid();
   insert into auth.users (
     id,
@@ -136,6 +151,7 @@ as $$
 declare
   user_data json;
 begin
+  perform tests.assert_test_mode();
   user_data := tests.get_supabase_user(identifier);
 
   if user_data is null or user_data ->> 'id' is null then
@@ -171,5 +187,6 @@ begin
 end;
 $$;
 
--- Grant execute on all tests.* functions to the roles used in tests.
+-- Grant execute to the standard Supabase roles. The session-variable guard
+-- (tests.assert_test_mode) is the actual security boundary, not these grants.
 grant execute on all functions in schema tests to anon, authenticated, service_role;

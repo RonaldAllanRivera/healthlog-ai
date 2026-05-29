@@ -2,6 +2,10 @@
 -- Verifies that user A cannot read or write user B's data on every table,
 -- and that subscriptions/usage_tracking writes are blocked for normal users.
 
+-- Unlock the test helpers. The migration's tests.* functions check this
+-- session variable and refuse to run otherwise — protecting production.
+set app.testing = 'true';
+
 begin;
 select plan(26);
 
