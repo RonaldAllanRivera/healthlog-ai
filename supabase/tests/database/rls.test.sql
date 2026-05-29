@@ -1,10 +1,10 @@
 -- RLS isolation tests for healthlog-ai.
 -- Verifies that user A cannot read or write user B's data on every table,
 -- and that subscriptions/usage_tracking writes are blocked for normal users.
-
--- Unlock the test helpers. The migration's tests.* functions check this
--- session variable and refuse to run otherwise — protecting production.
-set app.testing = 'true';
+--
+-- This file runs via `supabase test db`, which connects as the postgres
+-- superuser — the only role that the tests.* helpers permit (see
+-- supabase/migrations/*_test_helpers.sql for the session_user guard).
 
 begin;
 select plan(26);

@@ -4,26 +4,44 @@
 -- so that RLS tests can create synthetic users and switch auth context.
 --
 -- SECURITY: these functions can fabricate users and impersonate identities.
--- If callable by anon or authenticated in production, a logged-in user
--- could escalate themselves to any other user. We mitigate two ways:
---   1. Every dangerous function requires the session variable
---      `app.testing = 'true'` to be set, otherwise it raises.
---   2. Tests set `app.testing = true` at the start of each file.
--- Production code will never set this variable, so calls fail safely.
+-- If callable in production, any logged-in user could escalate to any other
+-- user. We block this two ways, defense-in-depth:
+--
+--   1. EXECUTE on every tests.* function is revoked from anon, authenticated,
+--      and service_role. Only superuser/owner can call. This alone would be
+--      sufficient on a stock Postgres, but Supabase's PostgREST always
+--      connects as the `authenticator` role and then `SET ROLE`s to one of
+--      the API roles, which means an attacker can't easily call these
+--      anyway — but explicit revokes are still required.
+--
+--   2. Every dangerous function calls tests.assert_test_mode(), which
+--      checks `session_user = 'postgres'`. session_user is the ORIGINAL
+--      authenticated role for the connection — it is NOT changed by
+--      `SET ROLE`. PostgREST connects as `authenticator`, so session_user
+--      for any API call is `authenticator`. Only `supabase test db` (which
+--      connects directly as postgres) passes this check.
+--
+-- Why not check `current_user` instead? Because `SET ROLE postgres` from
+-- a privileged session would change current_user. session_user is immune.
+-- Why not just use a USERSET GUC like `app.testing`? Because any user can
+-- SET that themselves — it's not a security boundary.
 
 create schema if not exists tests;
+-- Schema usage open to all Supabase roles. The actual security boundary is
+-- the session_user check inside each function — schema usage is just name
+-- resolution and is harmless on its own.
 grant usage on schema tests to anon, authenticated, service_role;
 
--- Internal guard called by every dangerous helper. Raises if not in test mode.
 create or replace function tests.assert_test_mode()
 returns void
 language plpgsql
 as $$
 begin
-  if current_setting('app.testing', true) is distinct from 'true' then
+  if session_user is distinct from 'postgres' then
     raise exception
-      'tests.* helpers may only be called when app.testing = ''true''. '
-      'This protects production from impersonation attacks.';
+      'tests.* helpers may only be called by the postgres superuser '
+      '(via `supabase test db`). Refusing to run as session_user=%.',
+      session_user;
   end if;
 end;
 $$;
@@ -92,6 +110,7 @@ as $$
 declare
   supabase_user json;
 begin
+  perform tests.assert_test_mode();
   select json_build_object(
     'id', id,
     'email', email,
@@ -125,6 +144,7 @@ as $$
 declare
   supabase_user uuid;
 begin
+  perform tests.assert_test_mode();
   select id
   into supabase_user
   from auth.users
@@ -187,6 +207,10 @@ begin
 end;
 $$;
 
--- Grant execute to the standard Supabase roles. The session-variable guard
--- (tests.assert_test_mode) is the actual security boundary, not these grants.
+-- Grant execute to the standard Supabase roles. Tests need this because they
+-- call helpers after `set role authenticated` or `set local role service_role`.
+-- The session_user check inside each function is the actual security boundary;
+-- session_user is the ORIGINAL authenticated role for the connection and is
+-- preserved across SET ROLE — so an attacker connecting via PostgREST (whose
+-- session_user is always 'authenticator') cannot bypass it.
 grant execute on all functions in schema tests to anon, authenticated, service_role;
